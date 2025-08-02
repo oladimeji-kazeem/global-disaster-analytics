@@ -1,74 +1,97 @@
-
 import streamlit as st
 import pandas as pd
 import plotly.express as px
+import pydeck as pdk
 
-st.set_page_config(page_title="EM-DAT Disaster Dashboard", layout="wide")
-
+# Load data
 @st.cache_data
 def load_data():
-    return pd.read_csv("cleaned_emdat_data.csv", parse_dates=["entry_date", "last_update"])
+    df = pd.read_excel("public_emdat_2025-07-28.xlsx")
+    df = df.dropna(subset=["Latitude", "Longitude"])
+    df["Year"] = df["Start Year"]
+    df["Total Damage (USD)"] = df["Total Damage ('000 US$)"] * 1000
+    return df
+
+def format_number(num):
+    if pd.isna(num):
+        return "N/A"
+    if num >= 1_000_000_000:
+        return f"{num/1_000_000_000:.1f}B"
+    elif num >= 1_000_000:
+        return f"{num/1_000_000:.1f}M"
+    elif num >= 1_000:
+        return f"{num/1_000:.1f}K"
+    return str(num)
 
 df = load_data()
 
-st.title("🌍 EM-DAT Disaster Dashboard")
-
 # Sidebar filters
-st.sidebar.header("Filter Data")
-year_range = st.sidebar.slider("Select Year Range", 
-                               int(df['entry_date'].dt.year.min()), 
-                               int(df['entry_date'].dt.year.max()), 
-                               (2000, 2023))
+with st.sidebar:
+    st.header("Filters")
+    years = st.slider("Year Range", int(df["Year"].min()), int(df["Year"].max()), (2000, 2023))
+    disaster_group = st.multiselect("Disaster Group", df["Disaster Group"].dropna().unique(), default=list(df["Disaster Group"].dropna().unique()))
+    disaster_subgroup = st.multiselect("Disaster Subgroup", df["Disaster Subgroup"].dropna().unique(), default=list(df["Disaster Subgroup"].dropna().unique()))
+    disaster_subtype = st.multiselect("Disaster Subtype", df["Disaster Subtype"].dropna().unique(), default=list(df["Disaster Subtype"].dropna().unique()))
+    region = st.multiselect("Region", df["Region"].dropna().unique(), default=list(df["Region"].dropna().unique()))
+    subregion = st.multiselect("Subregion", df["Subregion"].dropna().unique(), default=list(df["Subregion"].dropna().unique()))
+    country = st.multiselect("Country", df["Country"].dropna().unique(), default=list(df["Country"].dropna().unique()))
 
-filtered_df = df[(df['entry_date'].dt.year >= year_range[0]) & 
-                 (df['entry_date'].dt.year <= year_range[1])]
+# Filter data
+filtered_df = df[
+    (df["Year"] >= years[0]) & (df["Year"] <= years[1]) &
+    (df["Disaster Group"].isin(disaster_group)) &
+    (df["Disaster Subgroup"].isin(disaster_subgroup)) &
+    (df["Disaster Subtype"].isin(disaster_subtype)) &
+    (df["Region"].isin(region)) &
+    (df["Subregion"].isin(subregion)) &
+    (df["Country"].isin(country))
+]
 
-disaster_type = st.sidebar.multiselect("Disaster Type", options=sorted(df['disaster_type'].dropna().unique()), default=None)
-if disaster_type:
-    filtered_df = filtered_df[filtered_df['disaster_type'].isin(disaster_type)]
+# KPIs
+total_events = len(filtered_df)
+total_deaths = filtered_df["Total Deaths"].sum()
+total_affected = filtered_df["Total Affected"].sum()
+total_injured = filtered_df["No. Injured"].sum()
+total_damage = filtered_df["Total Damage (USD)"].sum()
 
-country = st.sidebar.multiselect("Country ISO", options=sorted(df['iso'].dropna().unique()), default=None)
-if country:
-    filtered_df = filtered_df[filtered_df['iso'].isin(country)]
+st.markdown("<h1 style='text-align: center;'>🌍 Global Disaster Dashboard</h1>", unsafe_allow_html=True)
+col1, col2, col3, col4, col5 = st.columns(5)
+col1.metric("Events", format_number(total_events))
+col2.metric("Deaths", format_number(total_deaths))
+col3.metric("Injured", format_number(total_injured))
+col4.metric("Affected", format_number(total_affected))
+col5.metric("Damage (USD)", format_number(total_damage))
 
-# Page 1: Overview
-st.subheader("📈 Disaster Overview")
+# Tabs
+tab1, tab2, tab3 = st.tabs(["📊 Charts", "🗺️ Geo Map", "🗺️ Region Overview"])
 
-col1, col2 = st.columns(2)
+with tab1:
+    st.subheader("Total Deaths by Country")
+    st.plotly_chart(px.bar(filtered_df.groupby("Country")["Total Deaths"].sum().sort_values(ascending=False).head(10).reset_index(), x="Country", y="Total Deaths"))
 
-with col1:
-    yearly_counts = filtered_df['entry_date'].dt.year.value_counts().sort_index()
-    st.plotly_chart(px.line(x=yearly_counts.index, y=yearly_counts.values,
-                            labels={"x": "Year", "y": "Disaster Count"},
-                            title="Disaster Events Over Time"), use_container_width=True)
+    st.subheader("Total Affected by Country")
+    st.plotly_chart(px.bar(filtered_df.groupby("Country")["Total Affected"].sum().sort_values(ascending=False).head(10).reset_index(), x="Country", y="Total Affected"))
 
-with col2:
-    top_types = filtered_df['disaster_type'].value_counts().nlargest(10)
-    st.plotly_chart(px.bar(x=top_types.index, y=top_types.values,
-                           labels={"x": "Disaster Type", "y": "Count"},
-                           title="Top 10 Disaster Types"), use_container_width=True)
+    st.subheader("Injuries by Country")
+    st.plotly_chart(px.bar(filtered_df.groupby("Country")["No. Injured"].sum().sort_values(ascending=False).head(10).reset_index(), x="Country", y="No. Injured"))
 
-# Page 2: Economic Impact
-st.subheader("💰 Economic Impact")
+with tab2:
+    st.subheader("Disaster Events Map")
+    map_df = filtered_df.rename(columns={"Latitude": "latitude", "Longitude": "longitude"})
+    st.map(map_df[["latitude", "longitude"]])
 
-df_damage = filtered_df.dropna(subset=["total_damage_adjusted_000_us"])
-df_damage['year'] = df_damage['entry_date'].dt.year
+with tab3:
+    region_summary = filtered_df.groupby("Region")[["Total Deaths", "Total Affected", "No. Injured", "Total Damage (USD)"]].sum().reset_index()
+    st.dataframe(region_summary)
 
-agg_damage = df_damage.groupby('year')['total_damage_adjusted_000_us'].sum()
+    st.subheader("Total Affected by Region")
+    st.plotly_chart(px.bar(region_summary.sort_values("Total Affected", ascending=False), x="Region", y="Total Affected"))
 
-st.plotly_chart(px.bar(x=agg_damage.index, y=agg_damage.values,
-                       labels={"x": "Year", "y": "Total Damage (Adjusted, $'000)"},
-                       title="Total Adjusted Damage by Year"), use_container_width=True)
+    st.subheader("Total Damage by Region")
+    st.plotly_chart(px.bar(region_summary.sort_values("Total Damage (USD)", ascending=False), x="Region", y="Total Damage (USD)"))
 
-# Page 3: Country-Level Insights
-st.subheader("🌐 Country-Level Insights")
+    st.subheader("Total Death by Region")
+    st.plotly_chart(px.bar(region_summary.sort_values("Total Deaths", ascending=False), x="Region", y="Total Deaths"))
 
-country_counts = filtered_df['iso'].value_counts().nlargest(10)
-st.plotly_chart(px.bar(x=country_counts.index, y=country_counts.values,
-                       labels={"x": "Country ISO", "y": "Disaster Count"},
-                       title="Top 10 Countries by Disaster Events"), use_container_width=True)
-
-country_damage = df_damage.groupby('iso')['total_damage_adjusted_000_us'].sum().nlargest(10)
-st.plotly_chart(px.bar(x=country_damage.index, y=country_damage.values,
-                       labels={"x": "Country ISO", "y": "Total Damage (Adjusted, $'000)"},
-                       title="Top 10 Countries by Damage"), use_container_width=True)
+    st.subheader("Total Injured by Region")
+    st.plotly_chart(px.bar(region_summary.sort_values("No. Injured", ascending=False), x="Region", y="No. Injured"))
