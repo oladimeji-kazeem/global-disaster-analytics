@@ -2,6 +2,8 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 import pydeck as pdk
+import matplotlib.pyplot as plt
+from statsmodels.tsa.arima.model import ARIMA
 
 # Load data
 @st.cache_data
@@ -96,28 +98,40 @@ with tab3:
     st.subheader("Total Injured by Region")
     st.plotly_chart(px.bar(region_summary.sort_values("No. Injured", ascending=False), x="Region", y="No. Injured"))
 
+with tab4:
+    st.subheader("Predictive Analytics (ARIMA Model Forecasts)")
+    metrics = ["Total Deaths", "Total Affected", "No. Injured", "Total Damage (USD)"]
+    for metric in metrics:
+        try:
+            ts_data = df.dropna(subset=["Year", metric])
+            ts_series = ts_data.groupby("Year")[metric].sum()
+            ts_series = ts_series.astype(float)
+            model = ARIMA(ts_series, order=(1, 1, 1))
+            model_fit = model.fit()
+            forecast = model_fit.forecast(steps=10)
+            forecast.index = range(ts_series.index.max() + 1, ts_series.index.max() + 1 + len(forecast))
+
+            fig, ax = plt.subplots()
+            ts_series.plot(ax=ax, label="Historical")
+            forecast.plot(ax=ax, label="Forecast", linestyle="--")
+            ax.set_title(f"Forecast of {metric}")
+            ax.set_xlabel("Year")
+            ax.set_ylabel(metric)
+            ax.legend()
+            st.pyplot(fig)
+        except Exception as e:
+            st.warning(f"Could not generate forecast for {metric}: {e}")
 
 with tab5:
     st.subheader("📈 Forecast: Total Affected (Next 10 Years)")
-
-    from statsmodels.tsa.arima.model import ARIMA
-    import matplotlib.pyplot as plt
-
-    # Prepare time series data
     ts_df = df.groupby("Year")["Total Affected"].sum().dropna()
-    ts_df = ts_df[ts_df > 0]  # Remove years with 0 values
-    ts_df = ts_df.astype("float64")
-
-    # Fit ARIMA model
+    ts_df = ts_df[ts_df > 0].astype("float64")
     model = ARIMA(ts_df, order=(2, 1, 2))
     model_fit = model.fit()
-
-    # Forecast for next 10 years
     forecast_years = 10
     forecast = model_fit.forecast(steps=forecast_years)
     forecast_years_range = list(range(ts_df.index.max() + 1, ts_df.index.max() + 1 + forecast_years))
 
-    # Plot forecast
     fig, ax = plt.subplots()
     ts_df.plot(label="Historical", ax=ax)
     forecast.index = forecast_years_range
