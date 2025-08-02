@@ -63,7 +63,7 @@ col4.metric("Affected", format_number(total_affected))
 col5.metric("Damage (USD)", format_number(total_damage))
 
 # Tabs
-tab1, tab2, tab3 = st.tabs(["📊 Charts", "🗺️ Geo Map", "🗺️ Region Overview"])
+tab1, tab2, tab3, tab4, tab5 = st.tabs(["📊 Charts", "🗺️ Geo Map", "🗺️ Region Overview", "🤖 Predictive Analytics", "📈 Forecast"])
 
 with tab1:
     st.subheader("Total Deaths by Country")
@@ -95,3 +95,35 @@ with tab3:
 
     st.subheader("Total Injured by Region")
     st.plotly_chart(px.bar(region_summary.sort_values("No. Injured", ascending=False), x="Region", y="No. Injured"))
+
+
+with tab5:
+    st.subheader("📈 Forecast: Total Affected (Next 10 Years)")
+
+    from statsmodels.tsa.arima.model import ARIMA
+    import matplotlib.pyplot as plt
+
+    # Prepare time series data
+    ts_df = df.groupby("Year")["Total Affected"].sum().dropna()
+    ts_df = ts_df[ts_df > 0]  # Remove years with 0 values
+    ts_df = ts_df.astype("float64")
+
+    # Fit ARIMA model
+    model = ARIMA(ts_df, order=(2, 1, 2))
+    model_fit = model.fit()
+
+    # Forecast for next 10 years
+    forecast_years = 10
+    forecast = model_fit.forecast(steps=forecast_years)
+    forecast_years_range = list(range(ts_df.index.max() + 1, ts_df.index.max() + 1 + forecast_years))
+
+    # Plot forecast
+    fig, ax = plt.subplots()
+    ts_df.plot(label="Historical", ax=ax)
+    forecast.index = forecast_years_range
+    forecast.plot(ax=ax, style="--", label="Forecast")
+    ax.set_xlabel("Year")
+    ax.set_ylabel("Total Affected")
+    ax.set_title("Forecast: Total Affected (ARIMA)")
+    ax.legend()
+    st.pyplot(fig)
